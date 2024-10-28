@@ -26,9 +26,9 @@ from pipeline.api_handler import ApiHandler
 # Set page config
 st.set_page_config(
     page_title="KnoWhiz Tutor",
-    page_icon="frontend/images/logo_short.ico"  # Replace with the actual path to your .ico file
+    page_icon="frontend/images/logo_short.ico",  # Replace with the actual path to your .ico file
+    layout="wide"
 )
-
 
 # Main content
 with open("frontend/images/logo_short.png", "rb") as image_file:
@@ -44,13 +44,6 @@ st.markdown(
 )
 st.subheader("Upload a document to get started.")
 
-
-# # Function to load PDF from file-like object
-# @st.cache_data
-# def load_pdf(file):
-#     return fitz.open(stream=file, filetype="pdf")
-
-
 # Custom function to extract document objects from uploaded file
 def extract_documents_from_file(file):
     # Create a temporary file
@@ -64,7 +57,6 @@ def extract_documents_from_file(file):
     documents = loader.load()
     return documents
 
-
 # Starts from Page 0
 def find_pages_with_excerpts(doc, excerpts):
     pages_with_excerpts = []
@@ -73,12 +65,11 @@ def find_pages_with_excerpts(doc, excerpts):
         for excerpt in excerpts:
             text_instances = page.search_for(excerpt)
             if text_instances:
-                pages_with_excerpts.append(page_num)
+                pages_with_excerpts.append(page_num + 1)  # Page numbers start from 1
                 break  # No need to search further on this page
     return (
-        pages_with_excerpts if pages_with_excerpts else [0]
+        pages_with_excerpts if pages_with_excerpts else [1]
     )  # Default to the first page if no excerpts are found
-
 
 @st.cache_resource
 def get_llm(llm_type, para):
@@ -95,7 +86,6 @@ def get_llm(llm_type, para):
         return llm_creative
     return llm_basic
 
-
 @st.cache_resource
 def get_embedding_models(embedding_model_type, para):
     para = para
@@ -105,7 +95,6 @@ def get_embedding_models(embedding_model_type, para):
         return embedding_model_default
     else:
         return embedding_model_default
-
 
 def get_response(_documents, collection_name, embedding_folder):
     para = {
@@ -156,7 +145,7 @@ def get_response(_documents, collection_name, embedding_folder):
         If you don't know the answer, say you don't know.
 
         Context: ```{context}```
-        
+
         For answer part, provide your detailed answer;
         For sources part, provide the
             "Direct sentences or paragraphs from the context that support 
@@ -166,7 +155,7 @@ def get_response(_documents, collection_name, embedding_folder):
 
         ```json
         {{
-            "answer": "Your a concise answer and directly answer the question in easy to understand language here. In Markdown format.",
+            "answer": "Your concise answer and directly answer the question in easy to understand language here. In Markdown format.",
             "sources": [
                 <source_1>,
                 <source_2>,
@@ -181,7 +170,7 @@ def get_response(_documents, collection_name, embedding_folder):
         """
         My question is: {input}
         Answer the question based on the context provided.
-        Since I am a student with no related knowledge backgroud, 
+        Since I am a student with no related knowledge background, 
         please provide a concise answer and directly answer the question in easy to understand language.
         """
     )
@@ -210,7 +199,6 @@ def get_response(_documents, collection_name, embedding_folder):
     )
     return chain
 
-
 def get_highlight_info(doc, excerpts):
     annotations = []
     for page_num in range(len(doc)):
@@ -221,7 +209,7 @@ def get_highlight_info(doc, excerpts):
                 for inst in text_instances:
                     annotations.append(
                         {
-                            "page": page_num + 1,
+                            "page": page_num + 1,  # Page numbers start from 1
                             "x": inst.x0,
                             "y": inst.y0,
                             "width": inst.x1 - inst.x0,
@@ -231,31 +219,25 @@ def get_highlight_info(doc, excerpts):
                     )
     return annotations
 
-
 def previous_page():
     if st.session_state.current_page > 1:
         st.session_state.current_page -=1
-
 
 def next_page():
     if st.session_state.current_page < st.session_state.total_pages:
         st.session_state.current_page += 1
 
-
 def close_pdf():
     st.session_state.show_pdf = False
-
 
 # Reset all states
 def file_changed():
     for key in st.session_state.keys():
         del st.session_state[key]
 
-
 #-----------------------------------------------------------------------------------------------#
 # Streamlit file uploader
 uploaded_file = st.file_uploader("Choose a PDF file", type="pdf", on_change=file_changed)
-
 
 if uploaded_file is not None:
     file = uploaded_file.read()
@@ -271,6 +253,7 @@ if uploaded_file is not None:
     with st.spinner("Processing file..."):
         documents = extract_documents_from_file(file)
         st.session_state.doc = fitz.open(stream=io.BytesIO(file), filetype="pdf")
+        st.session_state.total_pages = len(st.session_state.doc)
 
     if documents:
         qa_chain = get_response(documents, collection_name=course_id, embedding_folder=embedding_folder)
@@ -279,97 +262,88 @@ if uploaded_file is not None:
             st.session_state.chat_history = [
                 {"role": "assistant", "content": "Hello! How can I assist you today? "}
             ]
-            st.session_state.show_pdf = False
+            st.session_state.show_pdf = True  # Always show PDF
+            st.session_state.current_page = 1  # Start at the first page
 
-        # After every rerun, display chat history (assistant and client)
-        for msg in st.session_state.chat_history:
-            st.chat_message(msg["role"]).write(msg["content"])
+        # Set up the columns with equal width
+        col1, col2 = st.columns([1, 1])
 
-        # If there has been a user input, update chat_history, invoke model and get response
-        if user_input := st.chat_input("Your message"):
-            st.session_state.show_pdf = False
-            st.session_state.chat_history.append(
-                {"role": "user", "content": user_input}
-            )
-            st.chat_message("user").write(user_input)
-
-            with st.spinner("Generating response..."):
-                try:
-                    parsed_result = qa_chain.invoke({"input": user_input})
-                    print("Result: ", parsed_result)
-                    result = parsed_result['answer']
-                    answer = result['answer']
-                    sources = result['sources']
-
-                    try:
-                        # Check whether sources is a list of strings
-                        if not all(isinstance(source, str) for source in sources):
-                            raise ValueError("Sources must be a list of strings.")
-                        sources = list(sources)
-                    except:
-                        sources = []
-
-                    print("The content is from: ", sources)
-
-                    st.session_state.chat_history.append(
-                        {"role": "assistant", "content": answer}
-                    )
-                    st.chat_message("assistant").write(answer)
-
-                    # Update the session state with new sources
-                    st.session_state.sources = sources
-
-                    # Set a flag to indicate chat interaction has occurred
-                    st.session_state.chat_occurred = True
-
-                except json.JSONDecodeError:
-                    st.error(
-                        "There was an error parsing the response. Please try again."
-                    )
-
-            # Highlight PDF excerpts
-            if file and st.session_state.get("chat_occurred", False):
-                doc = st.session_state.doc
-                st.session_state.total_pages = len(doc)
-
-                # Find the page numbers containing the excerpts
-                pages_with_excerpts = find_pages_with_excerpts(doc, sources)
-
-                if "current_page" not in st.session_state:
-                    st.session_state.current_page = pages_with_excerpts[0]+1
-
-                if 'pages_with_exerpts' not in st.session_state:
-                    st.session_state.pages_with_excerpts = pages_with_excerpts
-
-                # Get annotations with correct coordinates
-                st.session_state.annotations = get_highlight_info(doc, st.session_state.sources)
-                
-                # Find the first page with excerpts
-                if st.session_state.annotations:
-                    st.session_state.current_page = min(annotation["page"] for annotation in st.session_state.annotations)
-                
-                st.session_state.show_pdf = True
-                
-        if st.session_state.show_pdf: 
-            # PDF display section
+        with col1:
             st.markdown("### PDF Preview")
-            # Navigation
-            col1, col2, col3, col4 = st.columns([8, 4, 3, 3], vertical_alignment='center')
-            with col1:
-                st.button("Previous Page", on_click=previous_page)
-            with col2:
+
+            # Navigation buttons
+            nav_col1, nav_col2, nav_col3 = st.columns([1, 2, 1])
+            with nav_col1:
+                if st.button("Previous Page"):
+                    previous_page()
+            with nav_col2:
                 st.write(
                     f"Page {st.session_state.current_page} of {st.session_state.total_pages}"
                 )
-            with col3:
-                st.button("Next Page", on_click=next_page, use_container_width=True)
-            with col4:
-                st.button("Close File", on_click=close_pdf, use_container_width=True)       
-            # Display the PDF viewer
+            with nav_col3:
+                if st.button("Next Page"):
+                    next_page()
+
+            # Display the PDF viewer with the current page
             pdf_viewer(
                 file,
                 width=700,
                 height=800,
-                annotations=st.session_state.annotations,
+                annotations=st.session_state.get('annotations', []),
                 pages_to_render=[st.session_state.current_page],
             )
+
+        with col2:
+            # After every rerun, display chat history (assistant and client)
+            for msg in st.session_state.chat_history:
+                st.chat_message(msg["role"]).write(msg["content"])
+
+            # If there has been a user input, update chat_history, invoke model and get response
+            if user_input := st.chat_input("Your message"):
+                st.session_state.chat_history.append(
+                    {"role": "user", "content": user_input}
+                )
+                st.chat_message("user").write(user_input)
+
+                with st.spinner("Generating response..."):
+                    try:
+                        parsed_result = qa_chain.invoke({"input": user_input})
+                        print("Result: ", parsed_result)
+                        result = parsed_result['answer']
+                        answer = result['answer']
+                        sources = result['sources']
+
+                        try:
+                            # Check whether sources is a list of strings
+                            if not all(isinstance(source, str) for source in sources):
+                                raise ValueError("Sources must be a list of strings.")
+                            sources = list(sources)
+                        except:
+                            sources = []
+
+                        print("The content is from: ", sources)
+
+                        st.session_state.chat_history.append(
+                            {"role": "assistant", "content": answer}
+                        )
+                        st.chat_message("assistant").write(answer)
+
+                        # Update the session state with new sources
+                        st.session_state.sources = sources
+
+                        # Generate annotations for highlighting
+                        st.session_state.annotations = get_highlight_info(st.session_state.doc, st.session_state.sources)
+
+                        # Find the pages with excerpts
+                        pages_with_excerpts = find_pages_with_excerpts(st.session_state.doc, st.session_state.sources)
+
+                        if pages_with_excerpts:
+                            # Automatically navigate to the first page with an excerpt
+                            st.session_state.current_page = pages_with_excerpts[0]
+                        else:
+                            st.session_state.current_page = 1  # Default to first page
+
+                    except json.JSONDecodeError:
+                        st.error(
+                            "There was an error parsing the response. Please try again."
+                        )
